@@ -1,0 +1,93 @@
+---
+- name: Harden Ubuntu Container
+  hosts: localhost
+  become: yes
+  tasks:
+    - name: Install SSH server
+      become: yes
+      package:
+        name: openssh-server
+        state: present
+    - name: Change SSH default port
+      become: yes
+      replace:
+        dest: /etc/ssh/sshd_config
+        regexp: "^#?Port .*"
+        replace: "Port 2222"
+
+    - name: Disable Direct root login
+      become: yes
+      lineinfile:
+        dest: /etc/ssh/sshd_config
+        regexp: "^#?PermitRootLogin"
+        line: "PermitRootLogin no"
+
+    - name: Only allow specific users to SSH in using their SSH keys
+      become: yes
+      lineinfile:
+        dest: /etc/ssh/sshd_config
+        regexp: "^AllowUsers"
+        line: "AllowUsers your_user1 your_user2"
+
+    - name: Install UFW
+      become: yes
+      package:
+        name: ufw
+        state: present
+    - name: Ensure UFW is enabled
+      become: yes
+      command: ufw enable
+    - name: Deny all incoming connections by default
+      become: yes
+      ufw:
+        rule: deny
+        direction: in
+        state: enabled
+
+    - name: Open ports only for SSH and specific range of 1000-2000 tcp only
+      become: yes
+      ufw:
+        rule: allow
+        port: "{{ item }}"
+        proto: tcp
+        state: enabled
+      loop:
+        - "22"
+        - "1000:2000"
+
+    - name: Install and enable 2Gb swapfile
+      become: yes
+      block:
+        - name: Create swapfile
+          command: dd if=/dev/zero of=/swapfile bs=1M count=2048
+          args:
+            creates: /swapfile
+        - name: Set correct permissions on swapfile
+          file:
+            path: /swapfile
+            mode: "0600"
+        - name: Format swapfile
+          command: mkswap /swapfile
+          args:
+            creates: /swapfile
+        - name: Add swapfile entry to /etc/fstab
+          lineinfile:
+            path: /etc/fstab
+            line: "/swapfile none swap sw 0 0"
+        - name: Check if swap_file exists
+          stat:
+            path: /var /lib/swap
+          register: swap_file
+        - name: Disable existing swap spaces
+          command: swapoff /var/lib/swap
+          ignore_errors: yes
+          when: swap_file.stat.exists
+        - name: Enable swapfile
+          command: swapon /swapfile
+          args:
+            creates: /swapfile
+          ignore_errors: yes
+      rescue:
+        - name: Print error message
+          debug:
+            msg: "Failed to create and enable swapfile"
